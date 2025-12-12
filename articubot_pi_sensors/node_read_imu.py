@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 # ROS2 Node: node_read_imu
-
-
 import sys
 import math
 import datetime
@@ -15,7 +13,6 @@ from geometry_msgs.msg import Vector3Stamped
 # Imports locales (estructura scripts/)
 from utils.BerryIMU import IMU
 import hw_config as cfg
-
 
 #############################
 # CONSTANTES
@@ -230,17 +227,18 @@ class BerryIMUNode(Node):
 
         acc_msg = Vector3Stamped()
         acc_msg.header.stamp = stamp
-        acc_msg.vector.x = ACCx
-        acc_msg.vector.y = ACCy
-        acc_msg.vector.z = ACCz
+        acc_msg.vector.x = float(ACCx)
+        acc_msg.vector.y = float(ACCy)
+        acc_msg.vector.z = float(ACCz)
         self.pub_accel.publish(acc_msg)
 
         mag_msg = Vector3Stamped()
         mag_msg.header.stamp = stamp
-        mag_msg.vector.x = MAGx
-        mag_msg.vector.y = MAGy
-        mag_msg.vector.z = MAGz
+        mag_msg.vector.x = float(MAGx)
+        mag_msg.vector.y = float(MAGy)
+        mag_msg.vector.z = float(MAGz)
         self.pub_mag.publish(mag_msg)
+
 
         self.pub_heading.publish(Float64(data=float(tilt_heading)))
 
