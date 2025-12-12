@@ -4,21 +4,38 @@
 import serial
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Twist
+from std_msgs.msg import String
+
+from rclpy.qos import (
+    QoSProfile,
+    ReliabilityPolicy,
+    HistoryPolicy,
+    DurabilityPolicy
+)
+
 import hw_config as cfg
 
 
 class MoveNode(Node):
     """
     node_move:
-    - Subscribes to cfg.TOPIC_CMD_VEL_MASTER (geometry_msgs/Twist).
-    - Sends movement commands via serial to Arduino Mega.
+    - Subscribes to /cmd_serial (String).
+    - Sends command to Arduino Mega ONLY when ID changes.
     """
 
     def __init__(self):
         super().__init__("node_move")
         cfg.check_domain_id(self.get_logger())
 
+        # ===== QoS PARAMETERS =====
+        self.declare_parameter("qos_reliability", "reliable")
+        self.declare_parameter("qos_history", "keep_last")
+        self.declare_parameter("qos_depth", 10)
+        self.declare_parameter("qos_durability", "volatile")
+
+        qos = self.build_qos_from_params()
+
+        # ===== Serial =====
         try:
             self.ser = serial.Serial(
                 cfg.MEGA_SERIAL_PORT,
@@ -26,41 +43,57 @@ class MoveNode(Node):
                 timeout=1.0
             )
             self.get_logger().info(
-                f"Opened Mega serial {cfg.MEGA_SERIAL_PORT} at {cfg.MEGA_BAUD} baud"
+                f"Opened Mega serial {cfg.MEGA_SERIAL_PORT} @ {cfg.MEGA_BAUD}"
             )
         except Exception as e:
-            self.get_logger().error(f"Error opening Mega serial: {e}")
+            self.get_logger().error(f"Serial error: {e}")
             self.ser = None
 
+        self.last_cmd = None
+        self.cmd_id = 0
+
+        # ===== SUBSCRIBER =====
         self.sub = self.create_subscription(
-            Twist,
-            cfg.TOPIC_CMD_VEL_MASTER,
-            self.cmd_vel_callback,
-            10
+            String,
+            cfg.TOPIC_CMD_SERIAL_MEGA,   # "/cmd_serial"
+            self.cmd_serial_callback,
+            qos
         )
 
-    def cmd_vel_callback(self, msg: Twist):
+    def build_qos_from_params(self):
+        return QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=self.get_parameter("qos_depth").value,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+
+    def cmd_serial_callback(self, msg: String):
         if self.ser is None:
             return
 
-        lin = msg.linear.x
-        ang = msg.angular.z
+        if msg.data == self.last_cmd:
+            return  # no change → no envío
 
-        cmd_str = f"M {lin:.3f} {ang:.3f}\n"
+        self.cmd_id += 1
+        self.last_cmd = msg.data
+
+        cmd = f"{msg.data}\n"
         try:
-            self.ser.write(cmd_str.encode())
+            self.ser.write(cmd.encode())
+            self.get_logger().info(
+                f"[CMD ID {self.cmd_id}] Sent to Mega: {msg.data}"
+            )
         except Exception as e:
-            self.get_logger().error(f"Error writing to Mega: {e}")
+            self.get_logger().error(f"Write error: {e}")
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = MoveNode()
-    try:
-        rclpy.spin(node)
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
 
 
 if __name__ == "__main__":

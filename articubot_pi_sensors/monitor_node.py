@@ -1,122 +1,136 @@
 #!/usr/bin/env python3
 # articubot_pi_sensors/monitor_node.py
 
-import math
 import rclpy
 from rclpy.node import Node
 
-from std_msgs.msg import Int32MultiArray
-from sensor_msgs.msg import Range, NavSatFix, MagneticField, CompressedImage
+from std_msgs.msg import Int32MultiArray, Float64, String
+from sensor_msgs.msg import Range, NavSatFix, CompressedImage
 from geometry_msgs.msg import Vector3Stamped
+
+from rclpy.qos import (
+    QoSProfile,
+    ReliabilityPolicy,
+    HistoryPolicy,
+    DurabilityPolicy
+)
+
 import hw_config as cfg
 
 
 class MonitorNode(Node):
-    """
-    Monitor node:
-    - Subscribes to all sensor topics and prints a live table in the terminal.
-    """
 
     def __init__(self):
         super().__init__("monitor_node")
         cfg.check_domain_id(self.get_logger())
 
-        self.last_ir = None
-        self.last_ultra = None
-        self.last_gps = None
-        self.last_accel = None
-        self.last_mag = None
-        self.last_cam_time = None
+        # ===== QoS =====
+        self.declare_parameter("qos_reliability", "best_effort")
+        self.declare_parameter("qos_history", "keep_last")
+        self.declare_parameter("qos_depth", 10)
+        self.declare_parameter("qos_durability", "volatile")
 
-        self.create_subscription(Int32MultiArray, cfg.TOPIC_IR, self.cb_ir, 10)
-        self.create_subscription(Range, cfg.TOPIC_ULTRASONIC, self.cb_ultra, 10)
-        self.create_subscription(NavSatFix, cfg.TOPIC_GPS, self.cb_gps, 10)
-        self.create_subscription(Vector3Stamped, cfg.TOPIC_IMU_ACCEL, self.cb_accel, 10)
-        self.create_subscription(MagneticField, cfg.TOPIC_IMU_MAG, self.cb_mag, 10)
-        self.create_subscription(CompressedImage, cfg.TOPIC_CAMERA, self.cb_cam, 10)
+        qos = self.build_qos_from_params()
+
+        # ===== FLAGS =====
+        self.declare_parameter("monitor_cmd_serial", True)
+        self.declare_parameter("monitor_ir", True)
+        self.declare_parameter("monitor_ultrasonic", True)
+        self.declare_parameter("monitor_gps", True)
+        self.declare_parameter("monitor_imu_accel", True)
+        self.declare_parameter("monitor_imu_mag", True)
+        self.declare_parameter("monitor_imu_compass", True)
+        self.declare_parameter("monitor_camera", True)
+
+        # ===== DATA =====
+        self.data = {}
+        self.ids = {}
+        self.last_value = {}
+
+        # ===== SUBSCRIPTIONS =====
+        self._sub(Int32MultiArray, cfg.TOPIC_IR, qos)
+        self._sub(Range, cfg.TOPIC_ULTRASONIC, qos)
+        self._sub(NavSatFix, cfg.TOPIC_GPS, qos)
+        self._sub(Vector3Stamped, cfg.TOPIC_IMU_ACCEL, qos)
+        self._sub(Vector3Stamped, cfg.TOPIC_IMU_MAG, qos)
+        self._sub(Float64, cfg.TOPIC_IMU_COMPASS, qos)
+        self._sub(CompressedImage, cfg.TOPIC_CAMERA, qos)
+
+        if self.get_parameter("monitor_cmd_serial").value:
+            self._sub(String, cfg.TOPIC_CMD_SERIAL_MEGA, qos, subscriber=True)
 
         self.timer = self.create_timer(0.2, self.print_table)
 
-    def cb_ir(self, msg):
-        self.last_ir = msg.data
+    def build_qos_from_params(self):
+        return QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT
+            if self.get_parameter("qos_reliability").value == "best_effort"
+            else ReliabilityPolicy.RELIABLE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=self.get_parameter("qos_depth").value,
+            durability=DurabilityPolicy.VOLATILE,
+        )
 
-    def cb_ultra(self, msg):
-        self.last_ultra = msg.range
+    def _sub(self, msg_type, topic, qos, subscriber=False):
+        self.ids[topic] = 0
+        self.last_value[topic] = None
 
-    def cb_gps(self, msg):
-        self.last_gps = (msg.latitude, msg.longitude, msg.altitude)
+        def cb(msg):
+            value = self._format(msg)
+            if value != self.last_value[topic]:
+                self.ids[topic] += 1
+                self.last_value[topic] = value
+            self.data[topic] = value
 
-    def cb_accel(self, msg):
-        self.last_accel = (msg.vector.x, msg.vector.y, msg.vector.z)
+        self.create_subscription(msg_type, topic, cb, qos)
 
-    def cb_mag(self, msg):
-        self.last_mag = (msg.magnetic_field.x, msg.magnetic_field.y, msg.magnetic_field.z)
-
-    def cb_cam(self, msg):
-        self.last_cam_time = msg.header.stamp
+    def _format(self, msg):
+        if isinstance(msg, Int32MultiArray):
+            return str(msg.data)
+        if isinstance(msg, Range):
+            return f"{msg.range:.3f} m"
+        if isinstance(msg, NavSatFix):
+            return f"{msg.latitude:.6f}, {msg.longitude:.6f}"
+        if isinstance(msg, Vector3Stamped):
+            return f"x={msg.vector.x:.2f}, y={msg.vector.y:.2f}, z={msg.vector.z:.2f}"
+        if isinstance(msg, Float64):
+            return f"{msg.data:.2f}"
+        if isinstance(msg, String):
+            return msg.data
+        if isinstance(msg, CompressedImage):
+            return f"frame @ {msg.header.stamp.sec}s"
+        return "?"
 
     def print_table(self):
-        # Clear screen and go to top-left
         print("\033[2J\033[H", end="")
+        print("=== MONITOR ===")
+        print(f"ROS_DOMAIN_ID = {cfg.ROS_DOMAIN_ID}\n")
 
-        print("=== SENSOR MONITOR (articubot_pi_sensors) ===")
-        print(f"ROS_DOMAIN_ID = {cfg.ROS_DOMAIN_ID}")
-        print("")
-        print("{:<20} | {:<50}".format("Sensor", "Value"))
-        print("-" * 75)
+        print("---- PUBLISHERS (SENSORS) ----")
+        print("{:<35} | {:<4} | {:<40}".format("TOPIC", "ID", "VALUE"))
+        print("-" * 90)
 
-        # IR
-        ir_str = "N/A"
-        if self.last_ir is not None:
-            ir_str = f"[{self.last_ir[0]}, {self.last_ir[1]}]"
-        print("{:<20} | {:<50}".format("IR (2x)", ir_str))
+        for topic in sorted(self.data):
+            print("{:<35} | {:<4} | {:<40}".format(
+                topic, self.ids[topic], self.data[topic])
+            )
 
-        # Ultrasonic
-        ultra_str = "N/A"
-        if self.last_ultra is not None:
-            ultra_str = f"{self.last_ultra:.3f} m"
-        print("{:<20} | {:<50}".format("Ultrasonic", ultra_str))
+        print("\n---- SUBSCRIBERS (COMMANDS) ----")
+        if cfg.TOPIC_CMD_SERIAL_MEGA in self.data:
+            print("{:<35} | {:<4} | {:<40}".format(
+                cfg.TOPIC_CMD_SERIAL_MEGA,
+                self.ids[cfg.TOPIC_CMD_SERIAL_MEGA],
+                self.data[cfg.TOPIC_CMD_SERIAL_MEGA])
+            )
 
-        # GPS
-        gps_str = "N/A"
-        if self.last_gps is not None:
-            lat, lon, alt = self.last_gps
-            if not math.isnan(lat) and not math.isnan(lon):
-                gps_str = f"lat={lat:.6f}, lon={lon:.6f}, alt={alt:.1f} m"
-        print("{:<20} | {:<50}".format("GPS", gps_str))
-
-        # Accel
-        accel_str = "N/A"
-        if self.last_accel is not None:
-            ax, ay, az = self.last_accel
-            accel_str = f"ax={ax:.1f}, ay={ay:.1f}, az={az:.1f}"
-        print("{:<20} | {:<50}".format("Accel (IMU)", accel_str))
-
-        # Mag
-        mag_str = "N/A"
-        if self.last_mag is not None:
-            mx, my, mz = self.last_mag
-            mag_str = f"mx={mx:.1f}, my={my:.1f}, mz={mz:.1f}"
-        print("{:<20} | {:<50}".format("Magnetometer", mag_str))
-
-        # Camera
-        cam_str = "N/A"
-        if self.last_cam_time is not None:
-            cam_str = f"last frame @ {self.last_cam_time.sec}s"
-        print("{:<20} | {:<50}".format("Camera", cam_str))
-
-        print("-" * 75)
-        print("Use Ctrl+C to stop this monitor node.")
-
+        print("\nCtrl+C to exit")
 
 def main(args=None):
     rclpy.init(args=args)
     node = MonitorNode()
-    try:
-        rclpy.spin(node)
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # ROS2 Node: node_read_imu
+
 import sys
 import math
 import datetime
@@ -10,7 +11,15 @@ from rclpy.node import Node
 from std_msgs.msg import Float64
 from geometry_msgs.msg import Vector3Stamped
 
-# Imports locales (estructura scripts/)
+# ===== QoS IMPORTS (NUEVO) =====
+from rclpy.qos import (
+    QoSProfile,
+    ReliabilityPolicy,
+    HistoryPolicy,
+    DurabilityPolicy
+)
+
+# Imports locales
 from utils.BerryIMU import IMU
 import hw_config as cfg
 
@@ -28,17 +37,15 @@ ACC_LPF_FACTOR = 0.4
 ACC_MEDIANTABLESIZE = 9
 MAG_MEDIANTABLESIZE = 9
 
-
 #############################
 # CALIBRACIÓN DEL COMPÁS
 #############################
-magXmin = 0
-magYmin = 0
-magZmin = 0
-magXmax = 0
-magYmax = 0
-magZmax = 0
-
+magXmin = -74
+magYmin = -260
+magZmin = -650
+magXmax = 1482
+magYmax = 917
+magZmax = 884
 
 #############################
 # VARIABLES DEL KALMAN
@@ -62,53 +69,41 @@ KFangleY = 0.0
 #########################################
 def kalmanFilterY(accAngle, gyroRate, DT):
     global KFangleY, y_bias, YP_00, YP_01, YP_10, YP_11
-
     KFangleY += DT * (gyroRate - y_bias)
-
     YP_00 += (-DT * (YP_10 + YP_01) + Q_angle * DT)
     YP_01 += (-DT * YP_11)
     YP_10 += (-DT * YP_11)
     YP_11 += (Q_gyro * DT)
-
     y = accAngle - KFangleY
     S = YP_00 + R_angle
     K_0 = YP_00 / S
     K_1 = YP_10 / S
-
     KFangleY += K_0 * y
     y_bias += K_1 * y
-
     YP_00 -= K_0 * YP_00
     YP_01 -= K_0 * YP_01
     YP_10 -= K_1 * YP_00
     YP_11 -= K_1 * YP_01
-
     return KFangleY
 
 
 def kalmanFilterX(accAngle, gyroRate, DT):
     global KFangleX, x_bias, XP_00, XP_01, XP_10, XP_11
-
     KFangleX += DT * (gyroRate - x_bias)
-
     XP_00 += (-DT * (XP_10 + XP_01) + Q_angle * DT)
     XP_01 += (-DT * XP_11)
     XP_10 += (-DT * XP_11)
     XP_11 += (Q_gyro * DT)
-
     x = accAngle - KFangleX
     S = XP_00 + R_angle
     K_0 = XP_00 / S
     K_1 = XP_10 / S
-
     KFangleX += K_0 * x
     x_bias += K_1 * x
-
     XP_00 -= K_0 * XP_00
     XP_01 -= K_0 * XP_01
     XP_10 -= K_1 * XP_00
     XP_11 -= K_1 * XP_01
-
     return KFangleX
 
 
@@ -122,14 +117,23 @@ class BerryIMUNode(Node):
 
         cfg.check_domain_id(self.get_logger())
 
+        # ===== QoS PARAMETERS (NUEVO) =====
+        self.declare_parameter("qos_reliability", "best_effort")
+        self.declare_parameter("qos_history", "keep_last")
+        self.declare_parameter("qos_depth", 10)
+        self.declare_parameter("qos_durability", "volatile")
+
+        qos = self.build_qos_from_params()
+
+        # ===== Publishers con QoS configurable =====
         self.pub_accel = self.create_publisher(
-            Vector3Stamped, cfg.TOPIC_IMU_ACCEL, 10)
+            Vector3Stamped, cfg.TOPIC_IMU_ACCEL, qos)
 
         self.pub_mag = self.create_publisher(
-            Vector3Stamped, cfg.TOPIC_IMU_MAG, 10)
+            Vector3Stamped, cfg.TOPIC_IMU_MAG, qos)
 
         self.pub_heading = self.create_publisher(
-            Float64, cfg.TOPIC_IMU_COMPASS, 10)
+            Float64, cfg.TOPIC_IMU_COMPASS, qos)
 
         self.get_logger().info("Inicializando BerryIMU...")
         IMU.detectIMU()
@@ -153,6 +157,26 @@ class BerryIMUNode(Node):
 
         self.last_time = datetime.datetime.now()
         self.timer = self.create_timer(0.033, self.loop)
+
+    # ===== QoS BUILDER (NUEVO) =====
+    def build_qos_from_params(self):
+        reliability = self.get_parameter("qos_reliability").value
+        history = self.get_parameter("qos_history").value
+        depth = self.get_parameter("qos_depth").value
+        durability = self.get_parameter("qos_durability").value
+
+        return QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE
+            if reliability.lower() == "reliable"
+            else ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_ALL
+            if history.lower() == "keep_all"
+            else HistoryPolicy.KEEP_LAST,
+            depth=depth,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL
+            if durability.lower() == "transient_local"
+            else DurabilityPolicy.VOLATILE,
+        )
 
     def _median(self, table, value):
         table.pop()
@@ -198,26 +222,16 @@ class BerryIMUNode(Node):
         MAGy = self._median(self.magY, MAGy)
         MAGz = self._median(self.magZ, MAGz)
 
-        AccXangle = math.atan2(ACCy, ACCz) * RAD_TO_DEG
-        AccYangle = (math.atan2(ACCz, ACCx) + M_PI) * RAD_TO_DEG
-        AccYangle = AccYangle - 270 if AccYangle > 90 else AccYangle + 90
-
-        rateX = GYRx * G_GAIN
-        rateY = GYRy * G_GAIN
-
-        KFangleX = kalmanFilterX(AccXangle, rateX, LP)
-        KFangleY = kalmanFilterY(AccYangle, rateY, LP)
-
-        heading = math.atan2(MAGy, MAGx) * RAD_TO_DEG
-        if heading < 0:
-            heading += 360
-
         acc_norm = math.sqrt(ACCx**2 + ACCy**2 + ACCz**2)
         pitch = math.asin(ACCx / acc_norm)
         roll = -math.asin(ACCy / (acc_norm * math.cos(pitch)))
 
         magXcomp = MAGx * math.cos(pitch) + MAGz * math.sin(pitch)
-        magYcomp = MAGx * math.sin(roll)*math.sin(pitch) + MAGy * math.cos(roll) - MAGz * math.sin(roll)*math.cos(pitch)
+        magYcomp = (
+            MAGx * math.sin(roll) * math.sin(pitch)
+            + MAGy * math.cos(roll)
+            - MAGz * math.sin(roll) * math.cos(pitch)
+        )
 
         tilt_heading = math.atan2(magYcomp, magXcomp) * RAD_TO_DEG
         if tilt_heading < 0:
@@ -238,7 +252,6 @@ class BerryIMUNode(Node):
         mag_msg.vector.y = float(MAGy)
         mag_msg.vector.z = float(MAGz)
         self.pub_mag.publish(mag_msg)
-
 
         self.pub_heading.publish(Float64(data=float(tilt_heading)))
 

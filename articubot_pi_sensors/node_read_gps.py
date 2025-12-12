@@ -7,6 +7,15 @@ import serial
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix, NavSatStatus
+
+# ===== QoS IMPORTS (NUEVO) =====
+from rclpy.qos import (
+    QoSProfile,
+    ReliabilityPolicy,
+    HistoryPolicy,
+    DurabilityPolicy
+)
+
 import hw_config as cfg
 
 
@@ -37,9 +46,24 @@ class GPSNode(Node):
 
     def __init__(self):
         super().__init__("node_read_gps")
+
         cfg.check_domain_id(self.get_logger())
 
-        self.publisher_ = self.create_publisher(NavSatFix, cfg.TOPIC_GPS, 10)
+        # ===== QoS PARAMETERS (NUEVO) =====
+        # GPS → confiable, baja tasa
+        self.declare_parameter("qos_reliability", "reliable")
+        self.declare_parameter("qos_history", "keep_last")
+        self.declare_parameter("qos_depth", 5)
+        self.declare_parameter("qos_durability", "volatile")
+
+        qos = self.build_qos_from_params()
+
+        # ===== Publisher con QoS configurable =====
+        self.publisher_ = self.create_publisher(
+            NavSatFix,
+            cfg.TOPIC_GPS,
+            qos
+        )
 
         try:
             self.ser = serial.Serial(
@@ -54,31 +78,54 @@ class GPSNode(Node):
             self.get_logger().error(f"Error opening GPS serial: {e}")
             self.ser = None
 
-        self.timer = self.create_timer(0.2, self.read_gps)  # 5 Hz
+        # 5 Hz
+        self.timer = self.create_timer(0.2, self.read_gps)
+
+    # ===== QoS BUILDER (NUEVO) =====
+    def build_qos_from_params(self):
+        reliability = self.get_parameter("qos_reliability").value
+        history = self.get_parameter("qos_history").value
+        depth = self.get_parameter("qos_depth").value
+        durability = self.get_parameter("qos_durability").value
+
+        return QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE
+            if reliability.lower() == "reliable"
+            else ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_ALL
+            if history.lower() == "keep_all"
+            else HistoryPolicy.KEEP_LAST,
+            depth=depth,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL
+            if durability.lower() == "transient_local"
+            else DurabilityPolicy.VOLATILE,
+        )
 
     def read_gps(self):
         if self.ser is None:
             return
+
         try:
             line = self.ser.readline().decode(errors="ignore").strip()
             if not line.startswith("$GP"):
                 return
 
             parts = line.split(",")
+
             if line.startswith("$GPGGA"):
-                # $GPGGA,utc,lat,NS,lon,EW,quality,numSV,HDOP,alt,unit,...
                 if len(parts) < 10:
                     return
                 lat = nmea_to_decimal(parts[2], parts[3])
                 lon = nmea_to_decimal(parts[4], parts[5])
                 alt = float(parts[9]) if parts[9] else 0.0
+
             elif line.startswith("$GPRMC"):
-                # $GPRMC,utc,status,lat,NS,lon,EW,sog,cog,date,...
                 if len(parts) < 7:
                     return
                 lat = nmea_to_decimal(parts[3], parts[4])
                 lon = nmea_to_decimal(parts[5], parts[6])
                 alt = 0.0
+
             else:
                 return
 
@@ -91,11 +138,14 @@ class GPSNode(Node):
             msg.longitude = lon
             msg.altitude = alt
 
-            # simple covariance placeholder
-            msg.position_covariance = [1.0, 0.0, 0.0,
-                                       0.0, 1.0, 0.0,
-                                       0.0, 0.0, 4.0]
-            msg.position_covariance_type = NavSatFix.COVARIANCE_TYPE_APPROXIMATED
+            msg.position_covariance = [
+                1.0, 0.0, 0.0,
+                0.0, 1.0, 0.0,
+                0.0, 0.0, 4.0
+            ]
+            msg.position_covariance_type = (
+                NavSatFix.COVARIANCE_TYPE_APPROXIMATED
+            )
 
             self.publisher_.publish(msg)
 

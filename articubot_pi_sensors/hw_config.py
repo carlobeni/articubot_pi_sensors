@@ -69,8 +69,9 @@ TOPIC_IMU_ACCEL = "/sensor/imu/accel"
 TOPIC_IMU_MAG = "/sensor/imu/mag"
 TOPIC_IMU_COMPASS = "/sensor/imu/compass"
 TOPIC_CAMERA = "/camera/image_raw/compressed"
-TOPIC_CMD_VEL_MASTER = "/cmd_vel_master"
 TOPIC_MONITOR = "/system/sensors_monitor"  # used only internally
+
+TOPIC_CMD_SERIAL_MEGA = "/cmd_serial"
 
 # Misc
 FRAME_ULTRASONIC = "ultrasonic_link"
