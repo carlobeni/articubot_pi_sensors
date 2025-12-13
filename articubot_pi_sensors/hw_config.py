@@ -57,8 +57,8 @@ GPS_BAUD = 9600                   # typical NMEA baud, adjust if configured diff
 CAMERA_DEVICE_INDEX = 0  # for cv2.VideoCapture(0)
 
 # Arduino Mega (serial link for hexapod commands)
-MEGA_SERIAL_PORT = "/dev/ttyACM0"   # adjust according to 'ls /dev/ttyACM*'
-MEGA_BAUD = 115200
+MEGA_SERIAL_PORT = "/dev/ttyAMA3"   # adjust according to 'ls /dev/ttyACM*'
+MEGA_BAUD = 9600
 
 
 # --------------- ROS TOPIC NAMES ---------------
