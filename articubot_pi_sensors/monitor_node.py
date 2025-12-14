@@ -34,7 +34,6 @@ class MonitorNode(Node):
         )
 
         # ===== DATA =====
-        # data[topic] = (time_or_id, value)
         self.data = {}
 
         # ===== SUBSCRIPTIONS (SENSORS) =====
@@ -104,7 +103,6 @@ class MonitorNode(Node):
                 f"{INDENT}ang_vel = [{av.x:.2f}, {av.y:.2f}, {av.z:.2f}]\n"
                 f"{INDENT}lin_acc = [{la.x:.2f}, {la.y:.2f}, {la.z:.2f}]"
             )
-
 
 
         # ===== MAGNETIC FIELD =====
