@@ -61,20 +61,21 @@ MEGA_SERIAL_PORT = "/dev/ttyAMA3"   # adjust according to 'ls /dev/ttyACM*'
 MEGA_BAUD = 9600
 
 
-# --------------- ROS TOPIC NAMES ---------------
+# ================= TOPICS (PI5) =================
 # READY TO USE
-TOPIC_IMU_GIR_ACC = "pi/sensor/imu_data"
-TOPIC_IMU_MAG = "pi/sensor/imu_mag"
-TOPIC_GPS = "pi/sensor/gps_fix"
-TOPIC_CAMERA = "pi/camera/image_raw"
-# used only internally
-TOPIC_MONITOR = "pi/system/monitor"  
-TOPIC_CMD_SERIAL_MEGA = "/cmd_serial"
-
+TOPIC_IMU_GIR_ACC = "/pi/sensor/imu_data"
+TOPIC_IMU_MAG = "/pi/sensor/imu_mag"
 # IN DEVELOPMENT
-TOPIC_IR = "pi/sensor/IR_measure"
-TOPIC_ULTRASONIC = "pi/sensor/ultrasonic_read"
+TOPIC_GPS = "/pi/sensor/gps_fix"
+TOPIC_CAMERA = "/pi/camera/image_raw"
+TOPIC_IR = "/pi/sensor/IR_measure"
+TOPIC_ULTRASONIC = "/pi/sensor/ultrasonic_read"
 
+# ================= TOPICS (just for PI5) =================
+TOPIC_MONITOR = "/pi/system/monitor"  
+
+# ================= COMMAND =================
+TOPIC_CMD_SERIAL_MEGA = "/cmd_serial"
 # Misc
 FRAME_ULTRASONIC = "ultrasonic_link"
 FRAME_IMU = "imu_link"
