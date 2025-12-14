@@ -102,7 +102,7 @@ class MonitorNode(Node):
             return (
                 f"ori     = [{q.x:.2f}, {q.y:.2f}, {q.z:.2f}, {q.w:.2f}]\n"
                 f"{INDENT}ang_vel = [{av.x:.2f}, {av.y:.2f}, {av.z:.2f}]\n"
-                f"{INDENT}lin_acc = [{la.x:.2f}, {la.y:.2f}, {la.z:.2f}]\n"
+                f"{INDENT}lin_acc = [{la.x:.2f}, {la.y:.2f}, {la.z:.2f}]"
             )
 
 
@@ -111,14 +111,7 @@ class MonitorNode(Node):
         if isinstance(msg, MagneticField):
             m = msg.magnetic_field
 
-            #Calculate heading
-            heading = 180 * math.atan2(m.y,m.x) / math.pi
-
-            #Only have our heading between 0 and 360
-            if heading < 0:
-                heading += 360
-
-            return f"x={m.x:.2f}, y={m.y:.2f}, z={m.z:.2f} | heading={heading:.1f}°"
+            return f"x={m.x:.2f}, y={m.y:.2f}, z={m.z:.2f}"
 
         if isinstance(msg, CompressedImage):
             return "frame"
