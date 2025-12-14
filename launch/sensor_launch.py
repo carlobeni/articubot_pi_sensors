@@ -69,14 +69,14 @@ def generate_launch_description():
             }],
         ),
 
-        # ===== MOVE / SERIAL BRIDGE =====
-        # Suscriptor a /cmd_serial → reenvía a Arduino Mega
+        # ===== COMMAND LISTENER → ARDUINO MEGA =====
         Node(
             package="articubot_pi_sensors",
-            executable="node_move.py",
-            name="node_move",
+            executable="command_listener_node.py",
+            name="command_listener",
             output="screen",
             parameters=[{
+                # Comandos = críticos → confiable
                 "qos_reliability": "reliable",
                 "qos_history": "keep_last",
                 "qos_depth": 10,

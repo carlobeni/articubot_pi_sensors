@@ -1,115 +1,41 @@
 #!/usr/bin/env python3
-# ROS2 Node: node_read_imu
 
 import sys
 import math
-import datetime
-
 import rclpy
 from rclpy.node import Node
+from sensor_msgs.msg import Imu, MagneticField
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
-from std_msgs.msg import Float64
-from geometry_msgs.msg import Vector3Stamped
-
-# ===== QoS IMPORTS (NUEVO) =====
-from rclpy.qos import (
-    QoSProfile,
-    ReliabilityPolicy,
-    HistoryPolicy,
-    DurabilityPolicy
-)
-
-# Imports locales
 from utils.BerryIMU import IMU
 import hw_config as cfg
+from transforms3d.euler import euler2quat
 
-#############################
+# =============================
 # CONSTANTES
-#############################
-RAD_TO_DEG = 57.29578
-M_PI = math.pi
+# =============================
+DEG_TO_RAD = math.pi / 180.0
 G_GAIN = 0.070
-AA = 0.40
 
-MAG_LPF_FACTOR = 0.4
 ACC_LPF_FACTOR = 0.4
-
+MAG_LPF_FACTOR = 0.4
 ACC_MEDIANTABLESIZE = 9
 MAG_MEDIANTABLESIZE = 9
 
-#############################
-# CALIBRACIÓN DEL COMPÁS
-#############################
-magXmin = -74
-magYmin = -260
-magZmin = -650
-magXmax = 1482
-magYmax = 917
-magZmax = 884
+# =============================
+# DECLINACIÓN MAGNÉTICA
+# =============================
+MAG_DECLINATION_DEG = -15.24
+MAG_DECLINATION_RAD = float(MAG_DECLINATION_DEG * DEG_TO_RAD)
 
-#############################
-# VARIABLES DEL KALMAN
-#############################
-Q_angle = 0.02
-Q_gyro = 0.0015
-R_angle = 0.005
-
-y_bias = 0.0
-x_bias = 0.0
-
-XP_00 = XP_01 = XP_10 = XP_11 = 0.0
-YP_00 = YP_01 = YP_10 = YP_11 = 0.0
-
-KFangleX = 0.0
-KFangleY = 0.0
+# =============================
+# CALIBRACIÓN MAGNETÓMETRO
+# =============================
+magXmin, magXmax = -74, 1482
+magYmin, magYmax = -260, 917
+magZmin, magZmax = -650, 884
 
 
-#########################################
-# KALMAN FILTERS
-#########################################
-def kalmanFilterY(accAngle, gyroRate, DT):
-    global KFangleY, y_bias, YP_00, YP_01, YP_10, YP_11
-    KFangleY += DT * (gyroRate - y_bias)
-    YP_00 += (-DT * (YP_10 + YP_01) + Q_angle * DT)
-    YP_01 += (-DT * YP_11)
-    YP_10 += (-DT * YP_11)
-    YP_11 += (Q_gyro * DT)
-    y = accAngle - KFangleY
-    S = YP_00 + R_angle
-    K_0 = YP_00 / S
-    K_1 = YP_10 / S
-    KFangleY += K_0 * y
-    y_bias += K_1 * y
-    YP_00 -= K_0 * YP_00
-    YP_01 -= K_0 * YP_01
-    YP_10 -= K_1 * YP_00
-    YP_11 -= K_1 * YP_01
-    return KFangleY
-
-
-def kalmanFilterX(accAngle, gyroRate, DT):
-    global KFangleX, x_bias, XP_00, XP_01, XP_10, XP_11
-    KFangleX += DT * (gyroRate - x_bias)
-    XP_00 += (-DT * (XP_10 + XP_01) + Q_angle * DT)
-    XP_01 += (-DT * XP_11)
-    XP_10 += (-DT * XP_11)
-    XP_11 += (Q_gyro * DT)
-    x = accAngle - KFangleX
-    S = XP_00 + R_angle
-    K_0 = XP_00 / S
-    K_1 = XP_10 / S
-    KFangleX += K_0 * x
-    x_bias += K_1 * x
-    XP_00 -= K_0 * XP_00
-    XP_01 -= K_0 * XP_01
-    XP_10 -= K_1 * XP_00
-    XP_11 -= K_1 * XP_01
-    return KFangleX
-
-
-#########################################
-# NODO ROS2
-#########################################
 class BerryIMUNode(Node):
 
     def __init__(self):
@@ -117,143 +43,167 @@ class BerryIMUNode(Node):
 
         cfg.check_domain_id(self.get_logger())
 
-        # ===== QoS PARAMETERS (NUEVO) =====
-        self.declare_parameter("qos_reliability", "best_effort")
-        self.declare_parameter("qos_history", "keep_last")
-        self.declare_parameter("qos_depth", 10)
-        self.declare_parameter("qos_durability", "volatile")
+        qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10,
+            durability=DurabilityPolicy.VOLATILE,
+        )
 
-        qos = self.build_qos_from_params()
+        self.pub_imu = self.create_publisher(Imu, cfg.TOPIC_IMU_GIR_ACC, qos)
+        self.pub_mag = self.create_publisher(MagneticField, cfg.TOPIC_IMU_MAG, qos)
 
-        # ===== Publishers con QoS configurable =====
-        self.pub_accel = self.create_publisher(
-            Vector3Stamped, cfg.TOPIC_IMU_ACCEL, qos)
-
-        self.pub_mag = self.create_publisher(
-            Vector3Stamped, cfg.TOPIC_IMU_MAG, qos)
-
-        self.pub_heading = self.create_publisher(
-            Float64, cfg.TOPIC_IMU_COMPASS, qos)
-
-        self.get_logger().info("Inicializando BerryIMU...")
         IMU.detectIMU()
         if IMU.BerryIMUversion == 99:
-            self.get_logger().error("No se detectó BerryIMU")
+            self.get_logger().fatal("No se detectó BerryIMU")
             sys.exit(1)
 
         IMU.initIMU()
         self.get_logger().info("BerryIMU inicializada correctamente")
 
-        self.oldAccX = self.oldAccY = self.oldAccZ = 0.0
-        self.oldMagX = self.oldMagY = self.oldMagZ = 0.0
+        self.oldAcc = [0.0, 0.0, 0.0]
+        self.oldMag = [0.0, 0.0, 0.0]
 
-        self.accX = [1] * ACC_MEDIANTABLESIZE
-        self.accY = [1] * ACC_MEDIANTABLESIZE
-        self.accZ = [1] * ACC_MEDIANTABLESIZE
+        self.acc_table = [[1.0]*ACC_MEDIANTABLESIZE for _ in range(3)]
+        self.mag_table = [[1.0]*MAG_MEDIANTABLESIZE for _ in range(3)]
 
-        self.magX = [1] * MAG_MEDIANTABLESIZE
-        self.magY = [1] * MAG_MEDIANTABLESIZE
-        self.magZ = [1] * MAG_MEDIANTABLESIZE
+        self.last_time = self.get_clock().now()
 
-        self.last_time = datetime.datetime.now()
-        self.timer = self.create_timer(0.033, self.loop)
+        self.create_timer(0.03, self.loop)
 
-    # ===== QoS BUILDER (NUEVO) =====
-    def build_qos_from_params(self):
-        reliability = self.get_parameter("qos_reliability").value
-        history = self.get_parameter("qos_history").value
-        depth = self.get_parameter("qos_depth").value
-        durability = self.get_parameter("qos_durability").value
-
-        return QoSProfile(
-            reliability=ReliabilityPolicy.RELIABLE
-            if reliability.lower() == "reliable"
-            else ReliabilityPolicy.BEST_EFFORT,
-            history=HistoryPolicy.KEEP_ALL
-            if history.lower() == "keep_all"
-            else HistoryPolicy.KEEP_LAST,
-            depth=depth,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL
-            if durability.lower() == "transient_local"
-            else DurabilityPolicy.VOLATILE,
-        )
-
-    def _median(self, table, value):
+    def median(self, table, val):
         table.pop()
-        table.insert(0, value)
+        table.insert(0, val)
         return sorted(table)[len(table)//2]
 
     def loop(self):
-        global KFangleX, KFangleY
+        now = self.get_clock().now()
 
-        ACCx = IMU.readACCx()
-        ACCy = IMU.readACCy()
-        ACCz = IMU.readACCz()
-        GYRx = IMU.readGYRx()
-        GYRy = IMU.readGYRy()
-        MAGx = IMU.readMAGx()
-        MAGy = IMU.readMAGy()
-        MAGz = IMU.readMAGz()
+        # =============================
+        # LECTURAS CRUDAS (forzar float)
+        # =============================
+        ACC = [float(IMU.readACCx()), float(IMU.readACCy()), float(IMU.readACCz())]
+        GYR = [float(IMU.readGYRx()), float(IMU.readGYRy()), float(IMU.readGYRz())]
+        MAG = [float(IMU.readMAGx()), float(IMU.readMAGy()), float(IMU.readMAGz())]
 
-        MAGx -= (magXmin + magXmax) / 2
-        MAGy -= (magYmin + magYmax) / 2
-        MAGz -= (magZmin + magZmax) / 2
+        # =============================
+        # CALIBRACIÓN MAG
+        # =============================
+        MAG[0] -= float((magXmin + magXmax) / 2.0)
+        MAG[1] -= float((magYmin + magYmax) / 2.0)
+        MAG[2] -= float((magZmin + magZmax) / 2.0)
 
-        now = datetime.datetime.now()
-        LP = (now - self.last_time).microseconds / 1_000_000.0
-        self.last_time = now
+        # =============================
+        # LOW PASS FILTER
+        # =============================
+        for i in range(3):
+            ACC[i] = float(ACC[i] * ACC_LPF_FACTOR + self.oldAcc[i] * (1.0 - ACC_LPF_FACTOR))
+            MAG[i] = float(MAG[i] * MAG_LPF_FACTOR + self.oldMag[i] * (1.0 - MAG_LPF_FACTOR))
 
-        ACCx = ACCx * ACC_LPF_FACTOR + self.oldAccX * (1 - ACC_LPF_FACTOR)
-        ACCy = ACCy * ACC_LPF_FACTOR + self.oldAccY * (1 - ACC_LPF_FACTOR)
-        ACCz = ACCz * ACC_LPF_FACTOR + self.oldAccZ * (1 - ACC_LPF_FACTOR)
+        self.oldAcc = ACC[:]
+        self.oldMag = MAG[:]
 
-        MAGx = MAGx * MAG_LPF_FACTOR + self.oldMagX * (1 - MAG_LPF_FACTOR)
-        MAGy = MAGy * MAG_LPF_FACTOR + self.oldMagY * (1 - MAG_LPF_FACTOR)
-        MAGz = MAGz * MAG_LPF_FACTOR + self.oldMagZ * (1 - MAG_LPF_FACTOR)
+        # =============================
+        # MEDIAN FILTER
+        # =============================
+        for i in range(3):
+            ACC[i] = float(self.median(self.acc_table[i], ACC[i]))
+            MAG[i] = float(self.median(self.mag_table[i], MAG[i]))
 
-        self.oldAccX, self.oldAccY, self.oldAccZ = ACCx, ACCy, ACCz
-        self.oldMagX, self.oldMagY, self.oldMagZ = MAGx, MAGy, MAGz
+        # =============================
+        # GIROSCOPIO (rad/s) -> float puro
+        # =============================
+        gyro_rate = [float(g * G_GAIN * DEG_TO_RAD) for g in GYR]
 
-        ACCx = self._median(self.accX, ACCx)
-        ACCy = self._median(self.accY, ACCy)
-        ACCz = self._median(self.accZ, ACCz)
+        # =============================
+        # ROLL / PITCH (ACC)
+        # =============================
+        acc_norm = float(math.sqrt(ACC[0]**2 + ACC[1]**2 + ACC[2]**2))
+        if acc_norm < 1e-6:
+            return
 
-        MAGx = self._median(self.magX, MAGx)
-        MAGy = self._median(self.magY, MAGy)
-        MAGz = self._median(self.magZ, MAGz)
+        accXn = float(ACC[0] / acc_norm)
+        accYn = float(ACC[1] / acc_norm)
+        accZn = float(ACC[2] / acc_norm)
 
-        acc_norm = math.sqrt(ACCx**2 + ACCy**2 + ACCz**2)
-        pitch = math.asin(ACCx / acc_norm)
-        roll = -math.asin(ACCy / (acc_norm * math.cos(pitch)))
+        roll = float(math.atan2(accYn, accZn))
+        pitch = float(math.atan2(-accXn, math.sqrt(accYn**2 + accZn**2)))
 
-        magXcomp = MAGx * math.cos(pitch) + MAGz * math.sin(pitch)
-        magYcomp = (
-            MAGx * math.sin(roll) * math.sin(pitch)
-            + MAGy * math.cos(roll)
-            - MAGz * math.sin(roll) * math.cos(pitch)
+        if abs(math.cos(pitch)) < 1e-3:
+            return
+
+        # =============================
+        # YAW (MAG + TILT + DECLINACIÓN)
+        # =============================
+        magXc = float(MAG[0] * math.cos(pitch) + MAG[2] * math.sin(pitch))
+        magYc = float(
+            MAG[0] * math.sin(roll) * math.sin(pitch)
+            + MAG[1] * math.cos(roll)
+            - MAG[2] * math.sin(roll) * math.cos(pitch)
         )
 
-        tilt_heading = math.atan2(magYcomp, magXcomp) * RAD_TO_DEG
-        if tilt_heading < 0:
-            tilt_heading += 360
+        yaw = float(math.atan2(magYc, magXc) + MAG_DECLINATION_RAD)
 
-        stamp = self.get_clock().now().to_msg()
+        if yaw > math.pi:
+            yaw -= float(2.0 * math.pi)
+        elif yaw < -math.pi:
+            yaw += float(2.0 * math.pi)
 
-        acc_msg = Vector3Stamped()
-        acc_msg.header.stamp = stamp
-        acc_msg.vector.x = float(ACCx)
-        acc_msg.vector.y = float(ACCy)
-        acc_msg.vector.z = float(ACCz)
-        self.pub_accel.publish(acc_msg)
+        # =============================
+        # CUATERNION (forzar float)
+        # transforms3d devuelve (w,x,y,z)
+        # =============================
+        qw, qx, qy, qz = euler2quat(roll, pitch, yaw)
+        qw, qx, qy, qz = float(qw), float(qx), float(qy), float(qz)
 
-        mag_msg = Vector3Stamped()
-        mag_msg.header.stamp = stamp
-        mag_msg.vector.x = float(MAGx)
-        mag_msg.vector.y = float(MAGy)
-        mag_msg.vector.z = float(MAGz)
-        self.pub_mag.publish(mag_msg)
+        # =============================
+        # MENSAJE IMU
+        # =============================
+        imu = Imu()
+        imu.header.stamp = now.to_msg()
+        imu.header.frame_id = "imu_link"
 
-        self.pub_heading.publish(Float64(data=float(tilt_heading)))
+        imu.orientation.x = qx
+        imu.orientation.y = qy
+        imu.orientation.z = qz
+        imu.orientation.w = qw
+
+        imu.angular_velocity.x = float(gyro_rate[0])
+        imu.angular_velocity.y = float(gyro_rate[1])
+        imu.angular_velocity.z = float(gyro_rate[2])
+
+        imu.linear_acceleration.x = float(ACC[0])
+        imu.linear_acceleration.y = float(ACC[1])
+        imu.linear_acceleration.z = float(ACC[2])
+
+        imu.orientation_covariance = [float(x) for x in [
+            0.0,  0.0,  0.0,
+            0.0,  0.0,  0.0,
+            0.0,  0.0,  0.0
+        ]]
+        imu.angular_velocity_covariance = [float(x) for x in [
+            0.0, 0.0,  0.0,
+            0.0,  0.0, 0.0,
+            0.0,  0.0,  0.0
+        ]]
+        imu.linear_acceleration_covariance = [float(x) for x in [
+            0.0, 0.0,  0.0,
+            0.0, 0.0,  0.0,
+            0.0, 0.0,  0.0
+        ]]
+
+        self.pub_imu.publish(imu)
+
+        # =============================
+        # MAGNETIC FIELD
+        # =============================
+        mag = MagneticField()
+        mag.header = imu.header
+        mag.magnetic_field.x = float(MAG[0])
+        mag.magnetic_field.y = float(MAG[1])
+        mag.magnetic_field.z = float(MAG[2])
+
+        self.pub_mag.publish(mag)
 
 
 def main(args=None):

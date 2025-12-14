@@ -17,7 +17,7 @@ install(
     articubot_pi_sensors/node_read_gps.py
     articubot_pi_sensors/node_read_imu.py
     articubot_pi_sensors/node_camera.py
-    articubot_pi_sensors/node_move.py
+    articubot_pi_sensors/command_listener_node.py
     articubot_pi_sensors/monitor_node.py
   DESTINATION lib/${PROJECT_NAME}
 )

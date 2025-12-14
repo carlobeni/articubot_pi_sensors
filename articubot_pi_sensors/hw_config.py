@@ -62,16 +62,18 @@ MEGA_BAUD = 9600
 
 
 # --------------- ROS TOPIC NAMES ---------------
-TOPIC_IR = "/sensor/IR_measure"
-TOPIC_ULTRASONIC = "/sensor/ultrasonic_read"
-TOPIC_GPS = "/sensor/gps/fix"     # NavSatFix
-TOPIC_IMU_ACCEL = "/sensor/imu/accel"
-TOPIC_IMU_MAG = "/sensor/imu/mag"
-TOPIC_IMU_COMPASS = "/sensor/imu/compass"
-TOPIC_CAMERA = "/camera/image_raw/compressed"
-TOPIC_MONITOR = "/system/sensors_monitor"  # used only internally
-
+# READY TO USE
+TOPIC_IMU_GIR_ACC = "pi/sensor/imu_data"
+TOPIC_IMU_MAG = "pi/sensor/imu_mag"
+TOPIC_GPS = "pi/sensor/gps_fix"
+TOPIC_CAMERA = "pi/camera/image_raw"
+# used only internally
+TOPIC_MONITOR = "pi/system/monitor"  
 TOPIC_CMD_SERIAL_MEGA = "/cmd_serial"
+
+# IN DEVELOPMENT
+TOPIC_IR = "pi/sensor/IR_measure"
+TOPIC_ULTRASONIC = "pi/sensor/ultrasonic_read"
 
 # Misc
 FRAME_ULTRASONIC = "ultrasonic_link"
