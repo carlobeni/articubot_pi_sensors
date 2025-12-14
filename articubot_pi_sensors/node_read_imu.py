@@ -22,6 +22,8 @@ MAG_LPF_FACTOR = 0.4
 ACC_MEDIANTABLESIZE = 9
 MAG_MEDIANTABLESIZE = 9
 
+factor_to_ms2 = (0.224/1000)*9.81  # 1G = 9.81m/s², 1LSB = 0.224mg
+
 # =============================
 # DECLINACIÓN MAGNÉTICA
 # =============================
@@ -31,9 +33,12 @@ MAG_DECLINATION_RAD = float(MAG_DECLINATION_DEG * DEG_TO_RAD)
 # =============================
 # CALIBRACIÓN MAGNETÓMETRO
 # =============================
-magXmin, magXmax = -74, 1482
-magYmin, magYmax = -260, 917
-magZmin, magZmax = -650, 884
+magXmin = -510
+magYmin = -245
+magZmin = -746
+magXmax = 1922
+magYmax = 1614
+magZmax = 650
 
 
 class BerryIMUNode(Node):
@@ -82,7 +87,14 @@ class BerryIMUNode(Node):
         # =============================
         # LECTURAS CRUDAS (forzar float)
         # =============================
-        ACC = [float(IMU.readACCx()), float(IMU.readACCy()), float(IMU.readACCz())]
+        ACC_raw = [
+            float(IMU.readACCx()),
+            float(IMU.readACCy()),
+            float(IMU.readACCz())
+        ]
+
+        ACC = [a * factor_to_ms2 for a in ACC_raw]
+
         GYR = [float(IMU.readGYRx()), float(IMU.readGYRy()), float(IMU.readGYRz())]
         MAG = [float(IMU.readMAGx()), float(IMU.readMAGy()), float(IMU.readMAGz())]
 
